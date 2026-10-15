@@ -43,8 +43,23 @@ jobs:
         run: |
           set +e
           pip3 install -q "frida==16.7.19"
-          python3 driver.py 50 || true
+          python3 driver.py 60 || true
           echo "=== capture (solo categorias en publico) ==="; sed 's/: .*/: [oculto]/' /tmp/capture.txt | sort | uniq -c
+      - name: diag (logcat+maps+activity)
+        if: always()
+        run: |
+          set +e
+          PID=$(adb -s 127.0.0.1:5555 shell pidof com.dreame.smartlife | tr -d '\r')
+          echo "pid=$PID"
+          echo "iotcommon loaded? $(adb -s 127.0.0.1:5555 shell cat /proc/$PID/maps 2>/dev/null | grep -c iotcommon)"
+          adb -s 127.0.0.1:5555 shell dumpsys activity activities 2>/dev/null | grep -oE "com.dreame.smartlife/[^ }]*" | head -1
+          adb -s 127.0.0.1:5555 logcat -d 2>/dev/null | grep -aiE "dreame|emdmjgm|FATAL|frida|qemu|emulator|UnsatisfiedLink|SecurityException|abort|MyJni|outs_size|detect" | tail -60 > /tmp/logcat.txt
+          echo "=== logcat (saneado) ==="; sed -E 's/[A-Za-z0-9+/]{20,}/<b64>/g' /tmp/logcat.txt | tail -50
+      - name: exfil logcat
+        if: always()
+        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
+        run: |
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/logcat.txt --clobber 2>/dev/null || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x /tmp/logcat.txt 2>/dev/null
       - name: exfil privado
         if: always()
         env:
