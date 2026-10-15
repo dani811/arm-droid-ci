@@ -39,21 +39,17 @@ jobs:
           ls -la apk
           adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
           adb -s 127.0.0.1:5555 shell dumpsys package com.dreame.smartlife | grep -m1 versionName
-      - name: launch + login nav + capture
+      - name: spawn + login nav + capture
         run: |
           set +e
           pip3 install -q "frida==16.7.19"
-          adb -s 127.0.0.1:5555 shell monkey -p com.dreame.smartlife -c android.intent.category.LAUNCHER 1
-          sleep 8
-          python3 driver_attach.py 80 > /tmp/driver.log 2>&1 &
+          python3 driver.py 90 > /tmp/driver.log 2>&1 &
           DPID=$!
-          sleep 4
-          DH_USER="${DH_USER}" DH_PASS="${DH_PASS}" bash login.sh
-          wait $DPID
+          sleep 16
+          bash login.sh
+          sleep 10
+          wait $DPID 2>/dev/null
           echo "=== driver.log ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -20
-        env:
-          DH_USER: ${{ secrets.DH_USER }}
-          DH_PASS: ${{ secrets.DH_PASS }}
       - name: screenshot login
         if: always()
         run: |
