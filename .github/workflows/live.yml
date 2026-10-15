@@ -17,9 +17,6 @@ jobs:
           adb connect 127.0.0.1:5555
           for i in $(seq 1 30); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
           adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
-          timeout 60 bash -c 'curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz'
-          adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server; adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
-          adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
           echo "READY abi=$(adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi) app=$(adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | head -1)"
