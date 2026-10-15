@@ -39,12 +39,21 @@ jobs:
           ls -la apk
           adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
           adb -s 127.0.0.1:5555 shell dumpsys package com.dreame.smartlife | grep -m1 versionName
-      - name: frida capture
+      - name: launch + login nav + capture
         run: |
           set +e
           pip3 install -q "frida==16.7.19"
-          python3 driver.py 60 || true
-          echo "=== capture (solo categorias en publico) ==="; sed 's/: .*/: [oculto]/' /tmp/capture.txt | sort | uniq -c
+          adb -s 127.0.0.1:5555 shell monkey -p com.dreame.smartlife -c android.intent.category.LAUNCHER 1
+          sleep 8
+          python3 driver_attach.py 80 > /tmp/driver.log 2>&1 &
+          DPID=$!
+          sleep 4
+          DH_USER="${DH_USER}" DH_PASS="${DH_PASS}" bash login.sh
+          wait $DPID
+          echo "=== driver.log ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -20
+        env:
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
       - name: screenshot login
         if: always()
         run: |
@@ -71,5 +80,5 @@ jobs:
         run: |
           set +e
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes "captura CI"
-          for f in /tmp/capture.txt /tmp/logcat.txt /tmp/screen.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
+          for f in /tmp/capture.txt /tmp/logcat.txt /tmp/screen.png /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
           echo "subidos a cap-out"
