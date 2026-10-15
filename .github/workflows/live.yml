@@ -17,13 +17,19 @@ jobs:
           adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
           echo "BOOT_OK abi=$(adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi)"
       - name: tunel bore (adb) PRIMERO
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
         run: |
           set +e
           curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz; chmod +x bore
           nohup ./bore local 5555 --to bore.pub > /tmp/bore.log 2>&1 &
-          sleep 8
-          echo "####ENDPOINT####"; grep -aoE "bore.pub:[0-9]+" /tmp/bore.log | head -1; echo "####END####"
-          cat /tmp/bore.log | tail -3
+          sleep 10
+          cp /tmp/bore.log /tmp/endpoint.txt
+          echo "---" >> /tmp/endpoint.txt
+          grep -aoE "bore.pub:[0-9]+" /tmp/bore.log | head -1 >> /tmp/endpoint.txt
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
+          echo "endpoint publicado en release"
       - name: frida + app (en paralelo, no bloquea el tunel)
         env:
           GH_TOKEN: ${{ secrets.APK_PAT }}
