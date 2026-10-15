@@ -1,0 +1,60 @@
+name: capture
+on:
+  workflow_dispatch: {}
+jobs:
+  cap:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: infra (binder+redroid+adb)
+        run: |
+          set +e
+          sudo apt-get update -q
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils python3-pip >/dev/null 2>&1
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest
+          sudo apt-get install -y -q android-tools-adb
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 30); do b=$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r'); [ "$b" = "1" ] && break; sleep 5; done
+          echo "abi=$(adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi)"
+      - name: root + frida-server
+        run: |
+          set +e
+          adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
+          echo "id=$(adb -s 127.0.0.1:5555 shell id)"
+          curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz
+          xz -d fs.xz
+          adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server
+          adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
+          adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"
+          sleep 4; adb -s 127.0.0.1:5555 shell "ps -A | grep frida-server | head -1"
+          adb -s 127.0.0.1:5555 forward tcp:27042 tcp:27042
+      - name: download apk (private) + install
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+        run: |
+          set +e
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          ls -la apk
+          adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          adb -s 127.0.0.1:5555 shell dumpsys package com.dreame.smartlife | grep -m1 versionName
+      - name: frida capture
+        run: |
+          set +e
+          pip3 install -q "frida==16.7.19"
+          python3 driver.py 50 || true
+          echo "=== capture (solo categorias en publico) ==="; sed 's/: .*/: [oculto]/' /tmp/capture.txt | sort | uniq -c
+      - name: exfil privado
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+        run: |
+          set +e
+          [ -f /tmp/capture.txt ] || echo "no capture" > /tmp/capture.txt
+          gh release delete cap-out -R dani811/dreame-camera-bridge -y 2>/dev/null
+          gh release create cap-out -R dani811/dreame-camera-bridge --title "cap-out" --notes "captura CI" /tmp/capture.txt#capture.txt
+          echo "subido a release privada cap-out"
+      - name: redroid logs on fail
+        if: failure()
+        run: docker logs redroid 2>&1 | tail -40
