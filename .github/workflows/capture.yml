@@ -52,11 +52,6 @@ jobs:
           sleep 8
           adb -s 127.0.0.1:5555 exec-out screencap -p > /tmp/screen.png
           ls -la /tmp/screen.png
-      - name: exfil screenshot
-        if: always()
-        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
-        run: |
-          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/screen.png --clobber 2>/dev/null || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x /tmp/screen.png 2>/dev/null
       - name: diag (logcat+maps+activity)
         if: always()
         run: |
@@ -67,21 +62,14 @@ jobs:
           adb -s 127.0.0.1:5555 shell dumpsys activity activities 2>/dev/null | grep -oE "com.dreame.smartlife/[^ }]*" | head -1
           adb -s 127.0.0.1:5555 logcat -d 2>/dev/null | grep -aiE "dreame|emdmjgm|FATAL|frida|qemu|emulator|UnsatisfiedLink|SecurityException|abort|MyJni|outs_size|detect" | tail -60 > /tmp/logcat.txt
           echo "=== logcat (saneado) ==="; sed -E 's/[A-Za-z0-9+/]{20,}/<b64>/g' /tmp/logcat.txt | tail -50
-      - name: exfil logcat
-        if: always()
-        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
-        run: |
-          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/logcat.txt --clobber 2>/dev/null || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x /tmp/logcat.txt 2>/dev/null
-      - name: exfil privado
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.APK_PAT }}
-        run: |
-          set +e
-          [ -f /tmp/capture.txt ] || echo "no capture" > /tmp/capture.txt
-          gh release delete cap-out -R dani811/dreame-camera-bridge -y 2>/dev/null
-          gh release create cap-out -R dani811/dreame-camera-bridge --title "cap-out" --notes "captura CI" /tmp/capture.txt#capture.txt
-          echo "subido a release privada cap-out"
       - name: redroid logs on fail
         if: failure()
         run: docker logs redroid 2>&1 | tail -40
+      - name: exfil all (privado)
+        if: always()
+        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
+        run: |
+          set +e
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes "captura CI"
+          for f in /tmp/capture.txt /tmp/logcat.txt /tmp/screen.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
+          echo "subidos a cap-out"
