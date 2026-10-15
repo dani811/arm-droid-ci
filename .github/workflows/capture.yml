@@ -45,6 +45,18 @@ jobs:
           pip3 install -q "frida==16.7.19"
           python3 driver.py 60 || true
           echo "=== capture (solo categorias en publico) ==="; sed 's/: .*/: [oculto]/' /tmp/capture.txt | sort | uniq -c
+      - name: screenshot login
+        if: always()
+        run: |
+          set +e
+          sleep 8
+          adb -s 127.0.0.1:5555 exec-out screencap -p > /tmp/screen.png
+          ls -la /tmp/screen.png
+      - name: exfil screenshot
+        if: always()
+        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
+        run: |
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/screen.png --clobber 2>/dev/null || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x /tmp/screen.png 2>/dev/null
       - name: diag (logcat+maps+activity)
         if: always()
         run: |
