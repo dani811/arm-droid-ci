@@ -1,0 +1,56 @@
+name: live
+on:
+  workflow_dispatch: {}
+jobs:
+  live:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - name: restore session
+        uses: actions/cache@v4
+        with: { path: rrdata.tar, key: redroid-data-live-${{ github.run_id }}, restore-keys: redroid-data- }
+      - name: infra redroid + frida + app
+        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
+        run: |
+          set +e
+          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          mkdir -p rrdata; [ -f rrdata.tar ] && { echo restore; sudo tar -xf rrdata.tar -C rrdata 2>/dev/null; }
+          docker run -itd --privileged --name redroid -v "$PWD/rrdata:/data" -p 5555:5555 redroid/redroid:13.0.0-latest
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 36); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 5; done
+          adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
+          curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz
+          adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server; adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
+          adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"
+          if adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | grep -q base.apk; then echo "app ya instalada"; else
+            gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+            adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; fi
+          adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi
+      - name: tunel bore (adb 5555 + frida 27042)
+        run: |
+          set +e
+          curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz
+          chmod +x bore
+          nohup ./bore local 5555 --to bore.pub > /tmp/bore5555.log 2>&1 &
+          nohup ./bore local 27042 --to bore.pub > /tmp/bore27042.log 2>&1 &
+          sleep 8
+          echo "=================== TUNEL ADB ==================="
+          grep -aoE "listening at bore.pub:[0-9]+" /tmp/bore5555.log | head -1
+          echo "=================== TUNEL FRIDA ================="
+          grep -aoE "listening at bore.pub:[0-9]+" /tmp/bore27042.log | head -1
+          echo "================================================="
+      - name: keep alive (6h) + guardar sesion periodica
+        run: |
+          set +e
+          for n in $(seq 1 64); do
+            sleep 300
+            docker exec redroid true 2>/dev/null || { echo "redroid caido"; break; }
+          done
+      - name: save session
+        if: always()
+        run: |
+          set +e; docker stop redroid; sleep 2
+          sudo chown -R "$(id -u):$(id -g)" rrdata 2>/dev/null
+          tar -cf rrdata.tar -C rrdata . 2>/dev/null; ls -la rrdata.tar
