@@ -43,13 +43,16 @@ jobs:
         run: |
           set +e
           pip3 install -q "frida==16.7.19"
-          python3 driver.py 90 > /tmp/driver.log 2>&1 &
+          python3 driver.py 130 > /tmp/driver.log 2>&1 &
           DPID=$!
           sleep 16
-          bash login.sh
-          sleep 10
+          DH_USER="$DH_USER" DH_PASS="$DH_PASS" bash login.sh
+          sleep 8
           wait $DPID 2>/dev/null
           echo "=== driver.log ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -20
+        env:
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
       - name: screenshot login
         if: always()
         run: |
