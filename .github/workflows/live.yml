@@ -6,7 +6,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 330
     steps:
-      - name: boot redroid
+      - name: boot redroid + frida + app
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
         run: |
           set +e
           sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils
@@ -15,33 +17,27 @@ jobs:
           adb connect 127.0.0.1:5555
           for i in $(seq 1 30); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
           adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
-          echo "BOOT_OK abi=$(adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi)"
-      - name: tunel bore (adb) PRIMERO
-        env:
-          GH_TOKEN: ${{ secrets.APK_PAT }}
-        run: |
-          set +e
-          curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz; chmod +x bore
-          nohup ./bore local 5555 --to bore.pub > /tmp/bore.log 2>&1 &
-          sleep 10
-          cp /tmp/bore.log /tmp/endpoint.txt
-          echo "---" >> /tmp/endpoint.txt
-          grep -aoE "bore.pub:[0-9]+" /tmp/bore.log | head -1 >> /tmp/endpoint.txt
-          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
-          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
-          echo "endpoint publicado en release"
-      - name: frida + app (en paralelo, no bloquea el tunel)
-        env:
-          GH_TOKEN: ${{ secrets.APK_PAT }}
-        run: |
-          set +e
           timeout 60 bash -c 'curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz'
           adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server; adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
           adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
-          echo "APP_READY $(adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | head -1)"
-      - name: keep alive
+          echo "READY abi=$(adb -s 127.0.0.1:5555 shell getprop ro.product.cpu.abi) app=$(adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | head -1)"
+      - name: tunel bore + keepalive (MISMO step)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
         run: |
           set +e
-          for n in $(seq 1 60); do sleep 300; docker exec redroid true 2>/dev/null || break; done
+          curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz; chmod +x bore
+          # adb 5555 y frida 27042 en dos tuneles
+          nohup ./bore local 5555 --to bore.pub > /tmp/bore_adb.log 2>&1 &
+          nohup ./bore local 27042 --to bore.pub > /tmp/bore_frida.log 2>&1 &
+          sleep 12
+          { echo "ADB $(grep -aoE 'bore.pub:[0-9]+' /tmp/bore_adb.log | head -1)";
+            echo "FRIDA $(grep -aoE 'bore.pub:[0-9]+' /tmp/bore_frida.log | head -1)"; } > /tmp/endpoint.txt
+          cat /tmp/endpoint.txt
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
+          echo "endpoint publicado"
+          # keepalive EN EL MISMO STEP para que bore sobreviva
+          for n in $(seq 1 320); do sleep 60; docker exec redroid true 2>/dev/null || break; done
