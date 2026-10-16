@@ -1,0 +1,36 @@
+name: live_login
+on: { workflow_dispatch: {} }
+jobs:
+  live:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid EU + login + tunnel (hold)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
+        run: |
+          set +e
+          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 40); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
+          adb -s 127.0.0.1:5555 shell "setprop persist.sys.locale es-ES; setprop persist.sys.timezone Europe/Madrid"
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz; chmod +x bore
+          nohup ./bore local 5555 --to bore.pub > /tmp/bore_adb.log 2>&1 &
+          sleep 12
+          EP="$(grep -aoE 'bore.pub:[0-9]+' /tmp/bore_adb.log | head -1)"
+          adb -s 127.0.0.1:5555 shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          sleep 10
+          bash login.sh || true
+          printf 'ADB %s\nLOGIN done\n' "$EP" > /tmp/endpoint.txt
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
+          echo "endpoint publicado: $EP"
+          for n in $(seq 1 320); do sleep 60; docker exec redroid true 2>/dev/null || break; done
