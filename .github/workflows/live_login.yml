@@ -6,7 +6,7 @@ jobs:
     timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
-      - name: redroid EU + login + tunnel (hold)
+      - name: redroid EU (#89 seq) + login + tunnel (hold)
         env:
           GH_TOKEN: ${{ secrets.APK_PAT }}
           DH_USER: ${{ secrets.DH_USER }}
@@ -19,17 +19,24 @@ jobs:
           adb connect 127.0.0.1:5555
           for i in $(seq 1 40); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
           adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
-          adb -s 127.0.0.1:5555 shell "setprop persist.sys.locale es-ES; setprop persist.sys.timezone Europe/Madrid"
+          # --- secuencia EU #89 ---
+          adb -s 127.0.0.1:5555 shell "setprop persist.sys.locale es-ES; setprop persist.sys.country ES; setprop persist.sys.timezone Europe/Madrid"
+          adb -s 127.0.0.1:5555 shell "settings put system system_locales es-ES"
+          adb -s 127.0.0.1:5555 shell "su 0 stop; sleep 2; su 0 start"
+          for i in $(seq 1 40); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          sleep 5
+          echo "locale=$(adb -s 127.0.0.1:5555 shell getprop persist.sys.locale) country=$(adb -s 127.0.0.1:5555 shell getprop persist.sys.country)"
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          adb -s 127.0.0.1:5555 shell pm clear com.dreame.smartlife
           curl -sL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-aarch64-unknown-linux-musl.tar.gz | tar xz; chmod +x bore
           nohup ./bore local 5555 --to bore.pub > /tmp/bore_adb.log 2>&1 &
           sleep 12
           EP="$(grep -aoE 'bore.pub:[0-9]+' /tmp/bore_adb.log | head -1)"
           adb -s 127.0.0.1:5555 shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
-          sleep 10
+          sleep 12
           bash login.sh || true
-          printf 'ADB %s\nLOGIN done\n' "$EP" > /tmp/endpoint.txt
+          printf 'ADB %s\nLOGIN done EU\n' "$EP" > /tmp/endpoint.txt
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
           echo "endpoint publicado: $EP"
