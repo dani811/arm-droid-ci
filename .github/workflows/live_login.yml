@@ -13,7 +13,7 @@ jobs:
           DH_PASS: ${{ secrets.DH_PASS }}
         run: |
           set +e
-          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils
+          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils tcpdump
           sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
           docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
           adb connect 127.0.0.1:5555
@@ -40,4 +40,11 @@ jobs:
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
           echo "endpoint publicado: $EP"
-          for n in $(seq 1 320); do sleep 60; docker exec redroid true 2>/dev/null || break; done
+          sudo tcpdump -i any -s0 -U -w /tmp/cap.pcap 'tcp port 8000' >/tmp/tcpdump.log 2>&1 &
+          echo "tcpdump arrancado (puerto 8000, relay RTMP plano)"
+          for n in $(seq 1 320); do
+            sleep 45
+            sudo cp /tmp/cap.pcap /tmp/cap_up.pcap 2>/dev/null
+            gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/cap_up.pcap --clobber 2>/dev/null && echo "pcap subido iter=$n size=$(stat -c%s /tmp/cap_up.pcap 2>/dev/null)b"
+            docker exec redroid true 2>/dev/null || break
+          done
