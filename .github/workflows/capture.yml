@@ -39,14 +39,17 @@ jobs:
         env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
         run: |
           set +e
+          for i in $(seq 1 24); do [ "$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)" = device ] && break; adb connect 127.0.0.1:5555 >/dev/null 2>&1; adb -s 127.0.0.1:5555 wait-for-device >/dev/null 2>&1; sleep 3; done; echo "adb=$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)"
           if adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | grep -q base.apk; then echo "ya instalada"; else
             gh release download apk218 -R dani811/dreame-camera-bridge -D apk
             adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
           fi
+          echo "install step ok"; exit 0
       - name: spawn + login/nav + capture
         env: { DH_USER: "${{ secrets.DH_USER }}", DH_PASS: "${{ secrets.DH_PASS }}" }
         run: |
           set +e
+          for i in $(seq 1 24); do [ "$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)" = device ] && break; adb connect 127.0.0.1:5555 >/dev/null 2>&1; adb -s 127.0.0.1:5555 wait-for-device >/dev/null 2>&1; sleep 3; done; echo "adb=$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)"
           pip3 install -q "frida==16.7.19"
           timeout 300 python3 driver.py 240 > /tmp/driver.log 2>&1 &
           DPID=$!
@@ -55,6 +58,7 @@ jobs:
           timeout 210 bash navigate.sh
           wait $DPID 2>/dev/null
           echo "=== driver ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -25
+          echo "capture step ok"; exit 0
       - name: save session
         if: always()
         run: |
