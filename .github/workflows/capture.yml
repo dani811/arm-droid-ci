@@ -6,71 +6,50 @@ on:
 jobs:
   cap:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: restore session
-        uses: actions/cache@v4
-        with:
-          path: rrdata.tar
-          key: redroid-data-${{ github.run_id }}
-          restore-keys: redroid-data-
-      - name: infra (redroid + volumen /data)
+      - name: redroid limpio + frida + app + captura señalización
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
+          DO_LOGIN: ${{ inputs.do_login }}
         run: |
           set +e
+          A(){ adb -s 127.0.0.1:5555 "$@"; }
+          waitdev(){ for i in $(seq 1 "${1:-30}"); do [ "$(A get-state 2>/dev/null)" = device ] && return 0; adb connect 127.0.0.1:5555 >/dev/null 2>&1; sleep 3; done; return 1; }
           sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils python3-pip
           sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
-          mkdir -p rrdata
-          if [ -f rrdata.tar ]; then echo "restaurando /data"; sudo tar -xf rrdata.tar -C rrdata 2>/dev/null; fi
-          docker run -itd --privileged --name redroid -v "$PWD/rrdata:/data" -p 5555:5555 redroid/redroid:13.0.0-latest
+          # redroid LIMPIO (sin volumen /data, evita la inestabilidad del cache)
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
           adb connect 127.0.0.1:5555
-          for i in $(seq 1 36); do b=$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r'); [ "$b" = "1" ] && break; sleep 5; done
-          echo "boot=$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed)"
-      - name: root + frida-server
-        run: |
-          set +e
-          adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
+          for i in $(seq 1 48); do [ "$(A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          echo "boot=$(A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')"
+          A root; sleep 4; waitdev 20; echo "adb=$(A get-state 2>/dev/null)"
+          # frida-server
           curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz
-          adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server; adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
-          adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 4
-          adb -s 127.0.0.1:5555 forward tcp:27042 tcp:27042
-          echo "root+frida step ok"; true
-      - name: install apk (si falta)
-        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
-        run: |
-          set +e
-          for i in $(seq 1 24); do [ "$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)" = device ] && break; adb connect 127.0.0.1:5555 >/dev/null 2>&1; adb -s 127.0.0.1:5555 wait-for-device >/dev/null 2>&1; sleep 3; done; echo "adb=$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)"
-          if adb -s 127.0.0.1:5555 shell pm path com.dreame.smartlife 2>/dev/null | grep -q base.apk; then echo "ya instalada"; else
-            gh release download apk218 -R dani811/dreame-camera-bridge -D apk
-            adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
-          fi
-          echo "install step ok"; exit 0
-      - name: spawn + login/nav + capture
-        env: { DH_USER: "${{ secrets.DH_USER }}", DH_PASS: "${{ secrets.DH_PASS }}" }
-        run: |
-          set +e
-          for i in $(seq 1 24); do [ "$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)" = device ] && break; adb connect 127.0.0.1:5555 >/dev/null 2>&1; adb -s 127.0.0.1:5555 wait-for-device >/dev/null 2>&1; sleep 3; done; echo "adb=$(adb -s 127.0.0.1:5555 get-state 2>/dev/null)"
+          A push fs /data/local/tmp/frida-server; A shell chmod 755 /data/local/tmp/frida-server
+          A shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 5
+          A forward tcp:27042 tcp:27042
+          # instalar app
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          waitdev 20
+          timeout 180 A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; echo "install rc=$?"
+          A shell pm path com.dreame.smartlife
+          # captura: driver.py (hook.js) en background
           pip3 install -q "frida==16.7.19"
-          timeout 300 python3 driver.py 240 > /tmp/driver.log 2>&1 &
+          timeout 300 python3 driver.py 250 > /tmp/driver.log 2>&1 &
           DPID=$!
           sleep 16
-          if [ "${{ inputs.do_login }}" = "true" ]; then timeout 90 bash login.sh; fi
+          [ "$DO_LOGIN" = "true" ] && timeout 100 bash login.sh
           timeout 210 bash navigate.sh
+          A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null
           wait $DPID 2>/dev/null
-          echo "=== driver ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -25
-          echo "capture step ok"; exit 0
-      - name: save session
-        if: always()
-        run: |
-          set +e
-          docker stop redroid; sleep 2
-          sudo chown -R "$(id -u):$(id -g)" rrdata 2>/dev/null
-          tar -cf rrdata.tar -C rrdata . 2>/dev/null; ls -la rrdata.tar
-      - name: exfil (privado)
-        if: always()
-        env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
-        run: |
-          set +e
+          echo "=== driver (oculto) ==="; sed -E 's/: .*/: [x]/' /tmp/driver.log | tail -20
+          echo "=== nav.log ==="; cat /tmp/nav.log 2>/dev/null | tail -40
+          # exfil
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           for f in /tmp/capture.txt /tmp/driver.log /tmp/nav.log /tmp/logcat.txt /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
-          echo "exfil step ok"; true
+          docker stop redroid >/dev/null 2>&1
+          echo "FIN"; exit 0
