@@ -35,7 +35,7 @@ jobs:
           # instalar app
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           waitdev 20
-          timeout 180 A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; echo "install rc=$?"
+          timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; echo "install rc=$?"
           A shell pm path com.dreame.smartlife
           # captura: driver.py (hook.js) en background
           pip3 install -q "frida==16.7.19"
