@@ -34,6 +34,7 @@ jobs:
           adb -s 127.0.0.1:5555 push fs /data/local/tmp/frida-server; adb -s 127.0.0.1:5555 shell chmod 755 /data/local/tmp/frida-server
           adb -s 127.0.0.1:5555 shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 4
           adb -s 127.0.0.1:5555 forward tcp:27042 tcp:27042
+          echo "root+frida step ok"; true
       - name: install apk (si falta)
         env: { GH_TOKEN: "${{ secrets.APK_PAT }}" }
         run: |
@@ -68,3 +69,4 @@ jobs:
           set +e
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           for f in /tmp/capture.txt /tmp/driver.log /tmp/nav.log /tmp/logcat.txt /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
+          echo "exfil step ok"; true
