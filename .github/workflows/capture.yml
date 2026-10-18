@@ -42,15 +42,21 @@ jobs:
           timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; echo "install rc=$?"
           PMPATH=$(A shell pm path $PKG 2>/dev/null | tr -d '\r'); echo "pm path=$PMPATH"
           if [ -z "$PMPATH" ]; then echo "FATAL: la app NO se instaló -> abortando captura"; A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null; gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x; gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/logcat.txt --clobber; docker stop redroid; exit 0; fi
-          # lanzar la app (LAUNCHER) y dejar que asiente
-          A shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; sleep 12
-          # login (coords; frágil -> screenshots para ajustar)
-          [ "$DO_LOGIN" = "true" ] && timeout 100 bash login.sh
-          # attach + hook (NO spawn: evita el anti-frida de arranque)
+          # lanzar la app por su LAUNCHER activity (monkey falla en silencio; el run
+          # anterior acabó en el buscador de Google porque la app no arrancó)
+          LA=$(A shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER $PKG 2>/dev/null | tail -1 | tr -d '\r'); echo "launcher=$LA"
+          A shell am start -n "$LA" >/dev/null 2>&1
+          APID=""; for i in $(seq 1 20); do APID=$(A shell pidof $PKG 2>/dev/null | tr -d '\r'); [ -n "$APID" ] && break; echo "esperando arranque (intento $i)"; A shell am start -n "$LA" >/dev/null 2>&1; sleep 3; done
+          echo "app PID=$APID"
+          if [ -z "$APID" ]; then echo "FATAL: la app no arranca"; A exec-out screencap -p > /tmp/screen_boot.png 2>/dev/null; A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null; gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x; for f in /tmp/logcat.txt /tmp/screen_boot.png; do [ -s "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done; docker stop redroid; exit 0; fi
+          sleep 10
+          # attach + hook (app ya viva; NO spawn -> evita el anti-frida de arranque)
           pip3 install -q "frida==16.7.19"
           timeout $((CAP_SECS+40)) python3 driver_attach.py $CAP_SECS > /tmp/driver.log 2>&1 &
           DPID=$!
           sleep 8
+          # login (coords; frágil -> screenshots screen_0..7 para ajustar en el siguiente ciclo)
+          [ "$DO_LOGIN" = "true" ] && timeout 100 bash login.sh
           # navegar hasta abrir el directo (dispara liblvmedia + señalización wss)
           timeout 230 bash navigate.sh
           A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null
