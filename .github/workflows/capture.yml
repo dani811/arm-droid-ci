@@ -3,25 +3,28 @@ on:
   workflow_dispatch:
     inputs:
       do_login: { description: "run login flow", default: "true" }
+      capture_secs: { description: "ventana de captura (s)", default: "260" }
 jobs:
   cap:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: redroid limpio + frida + app + captura señalización
+      - name: redroid limpio + frida + app + captura señalización (attach)
         env:
           GH_TOKEN: ${{ secrets.APK_PAT }}
           DH_USER: ${{ secrets.DH_USER }}
           DH_PASS: ${{ secrets.DH_PASS }}
           DO_LOGIN: ${{ inputs.do_login }}
+          CAP_SECS: ${{ inputs.capture_secs }}
         run: |
           set +e
+          PKG=com.dreame.smartlife
           A(){ adb -s 127.0.0.1:5555 "$@"; }
           waitdev(){ for i in $(seq 1 "${1:-30}"); do [ "$(A get-state 2>/dev/null)" = device ] && return 0; adb connect 127.0.0.1:5555 >/dev/null 2>&1; sleep 3; done; return 1; }
           sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils python3-pip
           sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
-          # redroid LIMPIO (sin volumen /data, evita la inestabilidad del cache)
+          # redroid LIMPIO (sin volumen /data: bootea estable)
           docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
           adb connect 127.0.0.1:5555
           for i in $(seq 1 48); do [ "$(A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
@@ -32,22 +35,29 @@ jobs:
           A push fs /data/local/tmp/frida-server; A shell chmod 755 /data/local/tmp/frida-server
           A shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 5
           A forward tcp:27042 tcp:27042
-          # instalar app
+          # instalar app (adb directo; el fix e79044b)
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           waitdev 20
+          echo "--- apks:"; ls -la apk/
           timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk; echo "install rc=$?"
-          A shell pm path com.dreame.smartlife
-          # captura: driver.py (hook.js) en background
-          pip3 install -q "frida==16.7.19"
-          timeout 300 python3 driver.py 250 > /tmp/driver.log 2>&1 &
-          DPID=$!
-          sleep 16
+          PMPATH=$(A shell pm path $PKG 2>/dev/null | tr -d '\r'); echo "pm path=$PMPATH"
+          if [ -z "$PMPATH" ]; then echo "FATAL: la app NO se instaló -> abortando captura"; A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null; gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x; gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/logcat.txt --clobber; docker stop redroid; exit 0; fi
+          # lanzar la app (LAUNCHER) y dejar que asiente
+          A shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; sleep 12
+          # login (coords; frágil -> screenshots para ajustar)
           [ "$DO_LOGIN" = "true" ] && timeout 100 bash login.sh
-          timeout 210 bash navigate.sh
+          # attach + hook (NO spawn: evita el anti-frida de arranque)
+          pip3 install -q "frida==16.7.19"
+          timeout $((CAP_SECS+40)) python3 driver_attach.py $CAP_SECS > /tmp/driver.log 2>&1 &
+          DPID=$!
+          sleep 8
+          # navegar hasta abrir el directo (dispara liblvmedia + señalización wss)
+          timeout 230 bash navigate.sh
           A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null
           wait $DPID 2>/dev/null
-          echo "=== driver (oculto) ==="; sed -E 's/: .*/: [x]/' /tmp/driver.log | tail -20
-          echo "=== nav.log ==="; cat /tmp/nav.log 2>/dev/null | tail -40
+          echo "=== capture.txt (wss TX/RX, saneado) ==="; sed -E 's/(token|session|sdp|candidate|iotId)=[^ "&,}]+/\1=<x>/g' /tmp/capture.txt 2>/dev/null | tail -40
+          echo "=== driver.log ==="; tail -15 /tmp/driver.log
+          echo "=== nav.log ==="; tail -50 /tmp/nav.log 2>/dev/null
           # exfil
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           for f in /tmp/capture.txt /tmp/driver.log /tmp/nav.log /tmp/logcat.txt /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
