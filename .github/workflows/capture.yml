@@ -47,11 +47,11 @@ jobs:
         run: |
           set +e
           pip3 install -q "frida==16.7.19"
-          timeout 140 python3 driver.py 110 > /tmp/driver.log 2>&1 &
+          timeout 300 python3 driver.py 240 > /tmp/driver.log 2>&1 &
           DPID=$!
           sleep 16
           if [ "${{ inputs.do_login }}" = "true" ]; then timeout 90 bash login.sh; fi
-          timeout 70 bash navigate.sh
+          timeout 210 bash navigate.sh
           wait $DPID 2>/dev/null
           echo "=== driver ==="; sed -E 's/: .*/: [oculto]/' /tmp/driver.log | tail -25
       - name: save session
