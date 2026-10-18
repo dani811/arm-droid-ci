@@ -67,4 +67,4 @@ jobs:
         run: |
           set +e
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
-          for f in /tmp/capture.txt /tmp/driver.log /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
+          for f in /tmp/capture.txt /tmp/driver.log /tmp/nav.log /tmp/logcat.txt /tmp/screen_*.png; do [ -f "$f" ] && gh release upload cap-out -R dani811/dreame-camera-bridge "$f" --clobber; done
