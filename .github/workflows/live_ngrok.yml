@@ -31,14 +31,19 @@ jobs:
           curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz | tar xz
           ./ngrok config add-authtoken "$NGROK_AUTHTOKEN"
           nohup ./ngrok tcp 5555 --log=stdout > /tmp/ngrok.log 2>&1 &
-          sleep 12
-          URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's#tcp://##')
           adb -s 127.0.0.1:5555 shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
           sleep 12
           bash login.sh || true
-          sleep 20
-          printf 'NGROK %s\nLOGIN done EU\n' "$URL" > /tmp/endpoint.txt
+          sleep 15
+          URL=""
+          for k in $(seq 1 30); do
+            URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url // empty' | sed 's#tcp://##')
+            [ -n "$URL" ] && break
+            sleep 3
+          done
+          ERR=$(grep -iaE 'error|ERR_NGROK|failed|authtoken' /tmp/ngrok.log | tail -4 | tr '\n' ';')
+          printf 'NGROK %s\nERR %s\nLOGIN done EU\n' "$URL" "$ERR" > /tmp/endpoint.txt
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
           gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
-          echo "ngrok ADB endpoint: $URL"
+          echo "ngrok ADB endpoint: [$URL] err:[$ERR]"
           for n in $(seq 1 90); do sleep 40; docker exec redroid true 2>/dev/null || break; done
