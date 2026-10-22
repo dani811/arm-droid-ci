@@ -32,6 +32,7 @@ jobs:
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
           timeout 180 $A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
           $A shell pm clear com.dreame.smartlife
+          for p in RECORD_AUDIO CAMERA BLUETOOTH_CONNECT BLUETOOTH_SCAN ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION POST_NOTIFICATIONS READ_PHONE_STATE; do $A shell pm grant com.dreame.smartlife android.permission.$p 2>/dev/null; done
           $A logcat -b all -c
           ( $A logcat -b all -v time > /tmp/logcat.txt 2>&1 ) &
           LOGPID=$!
@@ -40,12 +41,13 @@ jobs:
           bash login.sh || true
           sleep 20
           $A exec-out screencap -p > /tmp/s0.png 2>/dev/null
-          $A shell input tap 288 784; sleep 3
-          $A shell input tap 288 784; sleep 2
-          $A shell input keyevent 4; sleep 2
+          $A shell input tap 288 784; sleep 3          # Saltar onboarding
+          $A shell input tap 360 1067; sleep 3         # Mas tarde (dispositivos cercanos)
+          $A shell input tap 360 1067; sleep 2         # por si reaparece
           $A exec-out screencap -p > /tmp/s1.png 2>/dev/null
-          $A shell input tap 480 124; sleep 12
+          $A shell input tap 480 124; sleep 14         # icono auriculares (directo/intercom)
           $A exec-out screencap -p > /tmp/s2.png 2>/dev/null
+          $A shell input tap 360 1067; sleep 2         # posible popup permiso -> mas tarde/ok
           echo "esperando senalizacion ~30s"; sleep 30
           $A exec-out screencap -p > /tmp/s3.png 2>/dev/null
           sleep 2
