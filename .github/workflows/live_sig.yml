@@ -1,0 +1,73 @@
+name: live_sig
+on: { workflow_dispatch: {} }
+jobs:
+  live:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + login + abrir directo + capturar canal de senalizacion
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
+        run: |
+          set +e
+          echo "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF4VHZoczM4R3VQYXllRWltTkErawpySzk1RjVJTVBMbXQrLzd0TEtBVkZXNE5BWFRjbWhOVTl0SzBWOVZlb0J3cTQ3UHlTMExlSmlPR0JuNS9SUWplCm5YcDdSUGRDUjhUU0NyaTJkR0dGUE1qaFpSeWhNZDlTNkFiUGtxamJqNXdDQ1dLclBNd3BSS2ZSWTJkT0tzRVEKQWFJOVRMcFF3YnU0RWNkMVdHRHRndXVzblFDVVhFd0FRT1VwWEEwbmpPSi93OEVtdkluZ3RNc0lPNUdlc09tSgpyS2wvb25abUQrblRLb0w0WCt0ektJSS9IRDNYODZvUDF5eHdBRStoUmQ2S1Y0NFRMRC91NjZ6bVdHaEFieVhVCnVpdHM5NFlIMzBud0hxZmhhc0xJVkFkcThyaWVyaGJ6OFMyTXJ5cFdnQ3kvbmdZVUFMbjFOZDREeWVYSmRSREcKVlFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==" | base64 -d > pub.pem
+          sudo apt-get update -q || true
+          for t in 1 2 3; do sudo apt-get install -y -q android-tools-adb xz-utils && command -v adb && break; sleep 6; done
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          command -v adb >/dev/null || { echo FATAL no adb; exit 1; }
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          A="adb -s 127.0.0.1:5555"
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 40); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          $A root; sleep 3; adb connect 127.0.0.1:5555
+          $A shell "setprop persist.sys.locale es-ES; setprop persist.sys.country ES"
+          $A shell "settings put system system_locales es-ES"
+          $A shell "su 0 stop; sleep 2; su 0 start"
+          for i in $(seq 1 40); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          sleep 5
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 $A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          $A shell pm clear com.dreame.smartlife
+          # logcat desde ANTES de lanzar (captura todo el arranque + conexion aep/itls + senalizacion)
+          $A logcat -b all -c
+          ( $A logcat -b all -v time > /tmp/logcat.txt 2>&1 ) &
+          LOGPID=$!
+          $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          sleep 12
+          bash login.sh || true
+          sleep 20
+          # abrir el directo: volcar arbol UI y tocar la tarjeta del L40, luego posible boton de camara/play
+          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui1.xml
+          $A shell input tap 360 430; sleep 8
+          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui2.xml
+          $A shell input tap 360 430; sleep 8
+          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui3.xml
+          echo "esperando senalizacion P2P ~25s..."
+          sleep 25
+          kill $LOGPID 2>/dev/null
+          # heap durante/tras el intento
+          PID=$($A shell "su 0 pidof com.dreame.smartlife" | tr -d '\r' | awk '{print $1}')
+          $A shell "su 0 am dumpheap $PID /data/local/tmp/h.hprof"; sleep 8
+          $A shell "su 0 chmod 666 /data/local/tmp/h.hprof" 2>/dev/null
+          adb connect 127.0.0.1:5555 >/dev/null 2>&1
+          $A pull /data/local/tmp/h.hprof /tmp/h.hprof 2>&1 | tail -1
+          # --- construir loot: lineas de logcat del canal de senalizacion ---
+          : > loot.txt
+          echo "===== LOGCAT SENALIZACION =====" >> loot.txt
+          grep -aiE 'itls|mqtt|wss|websocket|signal|iotx-vision|vision/p2p|offer|answer|candidate|StartP2P|rtc|/sys/|app/up|app/down|connect\(\)|mqttHost|publish|subscribe|topic|peerconn|lvmedia|LVLive|aep|linksdk|cmp' /tmp/logcat.txt 2>/dev/null | grep -aivE 'password|accessToken' | head -400 >> loot.txt
+          echo "===== UI TREE (textos/resource-id visibles) =====" >> loot.txt
+          cat /tmp/ui1.xml /tmp/ui2.xml /tmp/ui3.xml 2>/dev/null | grep -aoE 'text="[^"]{1,40}"|resource-id="[^"]+"' | sort -u | head -120 >> loot.txt
+          echo "===== HEAP: topics/senalizacion =====" >> loot.txt
+          grep -aoE '/(sys|ext)/[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9/_{}.-]{3,60}' /tmp/h.hprof 2>/dev/null | sort -u | head -80 >> loot.txt
+          grep -aoE '(iotx-vision[a-z/-]*|offerSdp|answerSdp|/vision/[a-z/]+|StartP2PStreaming)' /tmp/h.hprof 2>/dev/null | sort -u | head -40 >> loot.txt
+          echo "loot=$(wc -c < loot.txt)B  logcat=$(wc -l < /tmp/logcat.txt)L"
+          openssl rand -hex 32 > aeskey.hex
+          openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in loot.txt -out loot.enc
+          openssl pkeyutl -encrypt -pubin -inkey pub.pem -in aeskey.hex -out key.enc
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge loot.enc key.enc --clobber
+          echo "SUBIDO loot.enc + key.enc"
