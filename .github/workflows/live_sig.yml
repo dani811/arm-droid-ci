@@ -6,7 +6,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: redroid + login + recon UI/logcat
+      - name: redroid + login + abrir directo + logcat senalizacion
         env:
           GH_TOKEN: ${{ secrets.APK_PAT }}
           DH_USER: ${{ secrets.DH_USER }}
@@ -38,22 +38,26 @@ jobs:
           $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
           sleep 12
           bash login.sh || true
-          sleep 25
-          $A exec-out screencap -p > /tmp/home.png 2>/dev/null
-          $A shell "uiautomator dump /sdcard/ui.xml" 2>/dev/null
-          $A pull /sdcard/ui.xml /tmp/ui.xml 2>/dev/null
-          sleep 3
+          sleep 20
+          $A exec-out screencap -p > /tmp/s0.png 2>/dev/null
+          $A shell input tap 288 784; sleep 3
+          $A shell input tap 288 784; sleep 2
+          $A shell input keyevent 4; sleep 2
+          $A exec-out screencap -p > /tmp/s1.png 2>/dev/null
+          $A shell input tap 480 124; sleep 12
+          $A exec-out screencap -p > /tmp/s2.png 2>/dev/null
+          echo "esperando senalizacion ~30s"; sleep 30
+          $A exec-out screencap -p > /tmp/s3.png 2>/dev/null
+          sleep 2
           kill $LOGPID 2>/dev/null
           : > loot.txt
-          echo "===== UI (texto + bounds de nodos con texto o clickable) =====" >> loot.txt
-          tr '>' '\n' < /tmp/ui.xml 2>/dev/null | grep -aE 'text="[^"]{1,40}"|clickable="true"' | grep -aoE 'text="[^"]*"|bounds="\[[0-9,]+\]\[[0-9,]+\]"' | paste -sd'|' - | tr '|' '\n' | head -250 >> loot.txt
-          echo "===== LOGCAT: canal de cuenta / senalizacion =====" >> loot.txt
-          grep -aiE 'MobileChannel|DownStreamHelper|MqttNet|persistent|itls|mqttHost|iotx-vision|/vision/|offerSdp|answerSdp|signalUrl|lv_cws|StartP2P|subscribe|publish|topic=|LVLive|lvmedia|player|preview|startPreview|joinChannel' /tmp/logcat.txt 2>/dev/null | grep -aivE 'password|accessToken|AWSS' | head -300 >> loot.txt
-          echo "loot=$(wc -c < loot.txt)B logcat=$(wc -l < /tmp/logcat.txt)L ui=$(wc -c < /tmp/ui.xml)B"
+          echo "===== LOGCAT senalizacion/canal =====" >> loot.txt
+          grep -aiE 'MobileChannel|offerSdp|answerSdp|signalUrl|lv_cws|iotx-vision|/vision/|StartP2P|joinChannel|startPreview|AliPlayer|LVLive|lvmedia|mqttHost|publish|subscribe|topic|rtc|peerconn|ice|turn|stun' /tmp/logcat.txt 2>/dev/null | grep -aivE 'password|accessToken|AWSS|Crashlytics|Firelog' | head -400 >> loot.txt
+          echo "loot=$(wc -c < loot.txt)B logcat=$(wc -l < /tmp/logcat.txt)L"
           openssl rand -hex 32 > aeskey.hex
           openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in loot.txt -out loot.enc
-          openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in /tmp/home.png -out home.enc 2>/dev/null
+          for s in s0 s1 s2 s3; do openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in /tmp/$s.png -out $s.enc 2>/dev/null; done
           openssl pkeyutl -encrypt -pubin -inkey pub.pem -in aeskey.hex -out key.enc
           gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
-          gh release upload cap-out -R dani811/dreame-camera-bridge loot.enc key.enc home.enc --clobber
+          gh release upload cap-out -R dani811/dreame-camera-bridge loot.enc key.enc s0.enc s1.enc s2.enc s3.enc --clobber
           echo "SUBIDO"
