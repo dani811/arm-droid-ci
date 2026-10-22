@@ -41,11 +41,39 @@ jobs:
           bash login.sh || true
           sleep 20
           # abrir el directo: volcar arbol UI y tocar la tarjeta del L40, luego posible boton de camara/play
-          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui1.xml
-          $A shell input tap 360 430; sleep 8
-          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui2.xml
-          $A shell input tap 360 430; sleep 8
-          $A exec-out uiautomator dump /dev/tty 2>/dev/null | sed 's/></>\n</g' > /tmp/ui3.xml
+          $A shell "uiautomator dump /sdcard/ui1.xml" 2>/dev/null; $A pull /sdcard/ui1.xml /tmp/ui1.xml 2>/dev/null
+          # tocar la tarjeta del device (parsea bounds del nodo con texto L40/Ultra; si no, centro)
+          XY=$(python3 - /tmp/ui1.xml <<'PY'
+import re,sys
+try: t=open(sys.argv[1]).read()
+except: t=""
+m=None
+for node in re.findall(r'<node[^>]*>',t):
+    tx=re.search(r'text="([^"]*)"',node)
+    if tx and re.search(r'(L40|Ultra|AE|vacuum|robot)',tx.group(1),re.I):
+        b=re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',node)
+        if b: x1,y1,x2,y2=map(int,b.groups()); m=((x1+x2)//2,(y1+y2)//2); break
+print(f"{m[0]} {m[1]}" if m else "360 430")
+PY
+)
+          echo "tap device card -> $XY"; $A shell input tap $XY; sleep 10
+          $A shell "uiautomator dump /sdcard/ui2.xml" 2>/dev/null; $A pull /sdcard/ui2.xml /tmp/ui2.xml 2>/dev/null
+          # tocar un boton de camara/directo/ver
+          XY2=$(python3 - /tmp/ui2.xml <<'PY'
+import re,sys
+try: t=open(sys.argv[1]).read()
+except: t=""
+m=None
+for node in re.findall(r'<node[^>]*>',t):
+    tx=re.search(r'text="([^"]*)"',node)
+    if tx and re.search(r'(c\xe1mara|camara|camera|monitor|directo|ver v|video|v\xeddeo|vigil|live)',tx.group(1),re.I):
+        b=re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',node)
+        if b: x1,y1,x2,y2=map(int,b.groups()); m=((x1+x2)//2,(y1+y2)//2); break
+print(f"{m[0]} {m[1]}" if m else "")
+PY
+)
+          [ -n "$XY2" ] && { echo "tap camera -> $XY2"; $A shell input tap $XY2; sleep 8; } || echo "no camera btn found"
+          $A shell "uiautomator dump /sdcard/ui3.xml" 2>/dev/null; $A pull /sdcard/ui3.xml /tmp/ui3.xml 2>/dev/null
           echo "esperando senalizacion P2P ~25s..."
           sleep 25
           kill $LOGPID 2>/dev/null
@@ -59,8 +87,9 @@ jobs:
           : > loot.txt
           echo "===== LOGCAT SENALIZACION =====" >> loot.txt
           grep -aiE 'itls|mqtt|wss|websocket|signal|iotx-vision|vision/p2p|offer|answer|candidate|StartP2P|rtc|/sys/|app/up|app/down|connect\(\)|mqttHost|publish|subscribe|topic|peerconn|lvmedia|LVLive|aep|linksdk|cmp' /tmp/logcat.txt 2>/dev/null | grep -aivE 'password|accessToken' | head -400 >> loot.txt
-          echo "===== UI TREE (textos/resource-id visibles) =====" >> loot.txt
-          cat /tmp/ui1.xml /tmp/ui2.xml /tmp/ui3.xml 2>/dev/null | grep -aoE 'text="[^"]{1,40}"|resource-id="[^"]+"' | sort -u | head -120 >> loot.txt
+          echo "===== UI TREE (texto + bounds, para mapear) =====" >> loot.txt
+          for f in /tmp/ui1.xml /tmp/ui2.xml /tmp/ui3.xml; do echo "--- $f ---" >> loot.txt; tr '>' '\n' < "$f" 2>/dev/null | grep -aE 'text="[^"]{1,40}"|clickable="true"' | grep -aoE 'text="[^"]*"|class="[^"]*"|bounds="\[[0-9,]+\]\[[0-9,]+\]"' | paste -sd' ' - | tr ';' '\n' 2>/dev/null | head -200 >> loot.txt; done
+          echo "===== intento camara (XY device=$XY camera=$XY2) =====" >> loot.txt
           echo "===== HEAP: topics/senalizacion =====" >> loot.txt
           grep -aoE '/(sys|ext)/[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9/_{}.-]{3,60}' /tmp/h.hprof 2>/dev/null | sort -u | head -80 >> loot.txt
           grep -aoE '(iotx-vision[a-z/-]*|offerSdp|answerSdp|/vision/[a-z/]+|StartP2PStreaming)' /tmp/h.hprof 2>/dev/null | sort -u | head -40 >> loot.txt
