@@ -14,7 +14,11 @@ jobs:
         run: |
           set +e
           echo "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF4VHZoczM4R3VQYXllRWltTkErawpySzk1RjVJTVBMbXQrLzd0TEtBVkZXNE5BWFRjbWhOVTl0SzBWOVZlb0J3cTQ3UHlTMExlSmlPR0JuNS9SUWplCm5YcDdSUGRDUjhUU0NyaTJkR0dGUE1qaFpSeWhNZDlTNkFiUGtxamJqNXdDQ1dLclBNd3BSS2ZSWTJkT0tzRVEKQWFJOVRMcFF3YnU0RWNkMVdHRHRndXVzblFDVVhFd0FRT1VwWEEwbmpPSi93OEVtdkluZ3RNc0lPNUdlc09tSgpyS2wvb25abUQrblRLb0w0WCt0ektJSS9IRDNYODZvUDF5eHdBRStoUmQ2S1Y0NFRMRC91NjZ6bVdHaEFieVhVCnVpdHM5NFlIMzBud0hxZmhhc0xJVkFkcThyaWVyaGJ6OFMyTXJ5cFdnQ3kvbmdZVUFMbjFOZDREeWVYSmRSREcKVlFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==" | base64 -d > pub.pem
-          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils
+          sudo apt-get update -q || true
+          for t in 1 2 3; do sudo apt-get install -y -q android-tools-adb xz-utils && command -v adb && break; sleep 6; done
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          echo "adb=$(command -v adb) ver=$(adb version 2>/dev/null|head -1)"
+          command -v adb >/dev/null || { echo 'FATAL no adb'; exit 1; }
           sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
           docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
           A="adb -s 127.0.0.1:5555"
