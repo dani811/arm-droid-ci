@@ -1,0 +1,44 @@
+name: live_ngrok
+on: { workflow_dispatch: {} }
+jobs:
+  live:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + login + ngrok ADB (hold)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER: ${{ secrets.DH_USER }}
+          DH_PASS: ${{ secrets.DH_PASS }}
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        run: |
+          set +e
+          sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" android-tools-adb xz-utils jq
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 40); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          adb -s 127.0.0.1:5555 root; sleep 3; adb connect 127.0.0.1:5555
+          adb -s 127.0.0.1:5555 shell "setprop persist.sys.locale es-ES; setprop persist.sys.country ES; setprop persist.sys.timezone Europe/Madrid"
+          adb -s 127.0.0.1:5555 shell "settings put system system_locales es-ES"
+          adb -s 127.0.0.1:5555 shell "su 0 stop; sleep 2; su 0 start"
+          for i in $(seq 1 40); do [ "$(adb -s 127.0.0.1:5555 shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          sleep 5
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 adb -s 127.0.0.1:5555 install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          adb -s 127.0.0.1:5555 shell pm clear com.dreame.smartlife
+          curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz | tar xz
+          ./ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+          nohup ./ngrok tcp 5555 --log=stdout > /tmp/ngrok.log 2>&1 &
+          sleep 12
+          URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's#tcp://##')
+          adb -s 127.0.0.1:5555 shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          sleep 12
+          bash login.sh || true
+          sleep 20
+          printf 'NGROK %s\nLOGIN done EU\n' "$URL" > /tmp/endpoint.txt
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge /tmp/endpoint.txt --clobber
+          echo "ngrok ADB endpoint: $URL"
+          for n in $(seq 1 90); do sleep 40; docker exec redroid true 2>/dev/null || break; done
