@@ -62,9 +62,15 @@ jobs:
           sleep 8
           # LOGIN = dispara el connect itls (ahi ocurre el HMAC con el deviceSecret).
           # NO navigate.sh -> no se abre el directo -> el robot NO se despierta.
-          bash login.sh || true
+          bash login_robust.sh || true
           echo "login hecho; dejo que conecte al canal itls..."
+          echo "=== login.log (resource-id/clase/texto, SIN valores) ==="; tail -40 /tmp/login.log 2>/dev/null
           sleep "$CAP_SECS"
+          # Señal de exito a prueba de fugas: si libitls.so se mapea en el proceso, la app
+          # inició la presencia itls (y el hook debió disparar). Si es 0, el login no llegó.
+          LPID=$($A shell pidof com.dreame.smartlife 2>/dev/null | tr -d '\r' | awk '{print $1}')
+          echo "libitls_mapeado=$($A shell "cat /proc/$LPID/maps 2>/dev/null" | grep -c libitls) (pid=$LPID)"
+          echo "conexiones :1883 (itls broker)=$($A shell "su 0 sh -c 'ss -tn 2>/dev/null | grep -c :1883'" | tr -d '\r')"
           wait $DPID 2>/dev/null
           # --- corroboracion pasiva (como live_loot) ---
           D=/data/data/com.dreame.smartlife
