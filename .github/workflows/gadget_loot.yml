@@ -1,0 +1,68 @@
+name: gadget_loot
+# Loot del CONNECT itls con la APK REEMPACKADA con frida-gadget (constructor ELF nativo
+# en libc++_shared.so, sin tocar dex -> sobrevive al packer que verifica bytecode Java).
+# El gadget carga DENTRO de la app y escucha en 27042; NO hay frida-server externo ->
+# no hay ptrace externo que el anti-frida detecte. Login por coords (Flutter). Exfil
+# hibrido RSA. Solo login, SIN directo -> no despierta el robot.
+on: { workflow_dispatch: { inputs: { capture_secs: { description: "ventana connect itls (s)", default: "150" } } } }
+jobs:
+  loot:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + APK gadgetizada + login + loot (sin frida-server)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER:  ${{ secrets.DH_USER }}
+          DH_PASS:  ${{ secrets.DH_PASS }}
+          CAP_SECS: ${{ inputs.capture_secs }}
+        run: |
+          set +e
+          echo "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF4VHZoczM4R3VQYXllRWltTkErawpySzk1RjVJTVBMbXQrLzd0TEtBVkZXNE5BWFRjbWhOVTl0SzBWOVZlb0J3cTQ3UHlTMExlSmlPR0JuNS9SUWplCm5YcDdSUGRDUjhUU0NyaTJkR0dGUE1qaFpSeWhNZDlTNkFiUGtxamJqNXdDQ1dLclBNd3BSS2ZSWTJkT0tzRVEKQWFJOVRMcFF3YnU0RWNkMVdHRHRndXVzblFDVVhFd0FRT1VwWEEwbmpPSi93OEVtdkluZ3RNc0lPNUdlc09tSgpyS2wvb25abUQrblRLb0w0WCt0ektJSS9IRDNYODZvUDF5eHdBRStoUmQ2S1Y0NFRMRC91NjZ6bVdHaEFieVhVCnVpdHM5NFlIMzBud0hxZmhhc0xJVkFkcThyaWVyaGJ6OFMyTXJ5cFdnQ3kvbmdZVUFMbjFOZDREeWVYSmRSREcKVlFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==" | base64 -d > pub.pem
+          A="adb -s 127.0.0.1:5555"
+          sudo apt-get update -q || true
+          sudo apt-get install -y -q android-tools-adb xz-utils python3-pip openssl || true
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 48); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          $A root; sleep 3; adb connect 127.0.0.1:5555
+          $A shell "su 0 setenforce 0" 2>/dev/null
+          # APK gadgetizada (release privado apk218-gadget)
+          gh release download apk218-gadget -R dani811/dreame-camera-bridge -D apk
+          timeout 200 $A install-multiple -r -d apk/base-signed.apk apk/split_config.arm64_v8a-signed.apk apk/split_config.xxhdpi-signed.apk; echo "install rc=$?"
+          PMPATH=$($A shell pm path com.dreame.smartlife 2>/dev/null | tr -d '\r'); echo "pm path=$PMPATH"
+          [ -z "$PMPATH" ] && { echo "FATAL: gadget APK no instalada (firma/split?)"; $A exec-out logcat -d 2>/dev/null | tail -30; docker stop redroid; exit 0; }
+          $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          # el gadget (constructor ELF) carga al cargar libs que dependen de libc++_shared
+          APID=""; for i in $(seq 1 25); do APID=$($A shell pidof com.dreame.smartlife 2>/dev/null|tr -d '\r'); [ -n "$APID" ] && break; sleep 2; done
+          echo "app PID=$APID"
+          [ -z "$APID" ] && { echo "FATAL: app no arranca (gadget rompió el boot?)"; $A exec-out logcat -d 2>/dev/null | grep -aiE 'FSTUB|gadget|frida|fatal|crash' | tail -30; docker stop redroid; exit 0; }
+          # confirmar que el gadget cargó (log del stub) y abrió 27042
+          sleep 6
+          echo "FSTUB log: $($A exec-out logcat -d 2>/dev/null | grep -aE 'FSTUB' | tail -3)"
+          $A forward tcp:27042 tcp:27042
+          echo "gadget escucha 27042 (dentro de la app): $($A shell "su 0 sh -c 'ss -tlnp 2>/dev/null | grep -c 27042'" | tr -d '\r')"
+          pip3 install -q "frida==16.7.19"
+          timeout $((CAP_SECS+40)) python3 driver_triple.py $CAP_SECS "$APID" > /tmp/driver.log 2>&1 &
+          DPID=$!
+          sleep 8
+          # login por COORDS (Flutter) -> dispara el connect itls
+          bash login.sh || true
+          echo "login hecho; dejo que conecte itls..."
+          sleep "$CAP_SECS"
+          LPID=$($A shell pidof com.dreame.smartlife 2>/dev/null | tr -d '\r' | awk '{print $1}')
+          echo "app PID final=$LPID (inicial $APID) -> $([ "$LPID" = "$APID" ] && echo 'MISMO (gadget sobrevivió)' || echo 'CAMBIO (anti-frida reinició)')"
+          echo "libitls_mapeado=$($A shell "cat /proc/$LPID/maps 2>/dev/null" | grep -c libitls)  conexiones_1883=$($A shell "su 0 sh -c 'ss -tn 2>/dev/null | grep -c :1883'" | tr -d '\r')"
+          wait $DPID 2>/dev/null
+          echo "=== driver.log (sin valores) ==="; tail -50 /tmp/driver.log
+          if [ -s /tmp/triple_raw.txt ]; then
+            echo "campos:"; cut -d= -f1 /tmp/triple_raw.txt | sort -u
+            echo "connect_hits: clientId=$(grep -c '^mqtt_clientId=' /tmp/triple_raw.txt) username=$(grep -c '^mqtt_username=' /tmp/triple_raw.txt) password=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt); itls_frames w=$(grep -c '^itls_w_hex=' /tmp/triple_raw.txt) r=$(grep -c '^itls_r_hex=' /tmp/triple_raw.txt)"
+          else echo "SIN CAPTURA"; fi
+          openssl rand -hex 32 > aeskey.hex
+          [ -s /tmp/triple_raw.txt ] && { openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in /tmp/triple_raw.txt -out loot_triple.enc; openssl pkeyutl -encrypt -pubin -inkey pub.pem -in aeskey.hex -out key_triple.enc; gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x; gh release upload cap-out -R dani811/dreame-camera-bridge loot_triple.enc key_triple.enc --clobber; echo "SUBIDO loot cifrado"; }
+          rm -f /tmp/triple_raw.txt aeskey.hex
+          docker stop redroid >/dev/null 2>&1; echo FIN; exit 0
