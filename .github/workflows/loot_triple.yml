@@ -82,6 +82,11 @@ jobs:
             echo "=== HEAP ==="; cat /tmp/loot_heap.txt 2>/dev/null; } > /tmp/loot.txt
           # driver.log completo: solo nombres de campo + diagnostico de attach (NUNCA valores)
           echo "=== driver.log (diagnostico attach; sin valores) ==="; tail -60 /tmp/driver.log
+          # diagnostico login/itls: logcat (evidencia de conexion, SIN secretos) + estado sesion
+          $A exec-out logcat -d > /tmp/logcat.txt 2>/dev/null
+          echo "=== logcat: evidencia de login/itls/mqtt (nombres de clase, no valores) ==="
+          grep -aiE 'itls|aliyun|linkkit|mobilechannel|mqtt|login.?success|loginSuccess|iotToken|aep|accs' /tmp/logcat.txt 2>/dev/null | grep -aivE 'password|secret|token=|=ey' | sed -E 's/[A-Za-z0-9_-]{24,}/<x>/g' | tail -40
+          echo "=== pantallas del login presentes ==="; ls -la /tmp/screen_*.png 2>/dev/null | awk '{print $NF}'
           if [ -s /tmp/triple_raw.txt ]; then
             echo "campos frida:"; cut -d= -f1 /tmp/triple_raw.txt | sort -u
             echo "deviceSecret_hits=$(grep -c '^deviceSecret_hex=' /tmp/triple_raw.txt) devName_hits=$(grep -c '^deviceName=' /tmp/triple_raw.txt) mqttPwd_hits=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt)"
