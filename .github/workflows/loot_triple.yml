@@ -62,9 +62,12 @@ jobs:
           sleep 8
           # LOGIN = dispara el connect itls (ahi ocurre el HMAC con el deviceSecret).
           # NO navigate.sh -> no se abre el directo -> el robot NO se despierta.
-          bash login_robust.sh || true
+          # Login por COORDENADAS (confirmadas por captura 720x1280): la app es Flutter
+          # -> uiautomator ciego -> solo sirven coords. login.sh ya las trae.
+          bash login.sh || true
           echo "login hecho; dejo que conecte al canal itls..."
-          echo "=== login.log (resource-id/clase/texto, SIN valores) ==="; tail -40 /tmp/login.log 2>/dev/null
+          # señal saneada del resultado del login (nombres de clase, valores redactados)
+          $A exec-out logcat -d 2>/dev/null | grep -aiE 'login.?succ|loginSucc|token|aliyun|itls|aep|mobilechannel|unauthor|invalid|error.?code' | grep -aivE 'password|secret|=ey|token=[A-Za-z0-9]' | sed -E 's/[A-Za-z0-9_-]{20,}/<x>/g' | tail -20
           sleep "$CAP_SECS"
           # Señal de exito a prueba de fugas: si libitls.so se mapea en el proceso, la app
           # inició la presencia itls (y el hook debió disparar). Si es 0, el login no llegó.
