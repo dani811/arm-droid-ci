@@ -89,7 +89,7 @@ jobs:
           echo "=== pantallas del login presentes ==="; ls -la /tmp/screen_*.png 2>/dev/null | awk '{print $NF}'
           if [ -s /tmp/triple_raw.txt ]; then
             echo "campos frida:"; cut -d= -f1 /tmp/triple_raw.txt | sort -u
-            echo "deviceSecret_hits=$(grep -c '^deviceSecret_hex=' /tmp/triple_raw.txt) devName_hits=$(grep -c '^deviceName=' /tmp/triple_raw.txt) mqttPwd_hits=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt)"
+            echo "connect_hits: clientId=$(grep -c '^mqtt_clientId=' /tmp/triple_raw.txt) username=$(grep -c '^mqtt_username=' /tmp/triple_raw.txt) password=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt); itls_frames w=$(grep -c '^itls_w_hex=' /tmp/triple_raw.txt) r=$(grep -c '^itls_r_hex=' /tmp/triple_raw.txt)"
           else
             echo "AVISO: frida no capturo nada (revisa que login conecto itls / anti-frida)"
           fi
