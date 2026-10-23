@@ -1,0 +1,93 @@
+name: dexdump_mem
+# Desempaqueta NetEase Yidun SIN frida: tras arrancar+loguear la app, el packer ya ha
+# DESCIFRADO el dex en memoria. Volcamos las regiones anon del proceso (root, /proc/PID/mem)
+# y tallamos los .dex por magic. No usa frida -> no dispara el anti-frida. Solo login
+# (no abre el directo -> no despierta el robot). Los .dex (código real) se suben a un
+# release PRIVADO (dreame-camera-bridge), nunca al repo público.
+on: { workflow_dispatch: {} }
+jobs:
+  dump:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + app + login + volcado dex de memoria
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER:  ${{ secrets.DH_USER }}
+          DH_PASS:  ${{ secrets.DH_PASS }}
+        run: |
+          set +e
+          A="adb -s 127.0.0.1:5555"
+          sudo apt-get update -q || true
+          sudo apt-get install -y -q android-tools-adb python3 || true
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 48); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          $A root; sleep 3; adb connect 127.0.0.1:5555
+          $A shell "su 0 setenforce 0" 2>/dev/null
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 $A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          $A shell pm clear com.dreame.smartlife
+          $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          PID=""; for i in $(seq 1 25); do PID=$($A shell pidof com.dreame.smartlife 2>/dev/null|tr -d '\r'|awk '{print $1}'); [ -n "$PID" ] && break; sleep 2; done
+          echo "app PID=$PID"; [ -z "$PID" ] && { echo FATAL; docker stop redroid; exit 0; }
+          sleep 12
+          bash login.sh || true
+          echo "login hecho; dejo que el packer descifre todo el dex en memoria..."
+          sleep 30
+          PID=$($A shell pidof com.dreame.smartlife 2>/dev/null|tr -d '\r'|awk '{print $1}'); echo "PID vivo=$PID"
+          # Volcar regiones ANON legibles del proceso (donde el packer deja el dex descifrado)
+          mkdir -p mem
+          $A shell "su 0 cat /proc/$PID/maps" > maps.txt 2>/dev/null
+          echo "regiones totales=$(wc -l < maps.txt)"
+          # seleccionar regiones r, anon o dalvik/dex, tamaño 8KB..96MB
+          awk '
+            /^[0-9a-f]+-[0-9a-f]+ r/ {
+              split($1,a,"-"); s=strtonum("0x"a[1]); e=strtonum("0x"a[2]); len=e-s;
+              path=($6=="")?"[anon]":$6;
+              if (len>=8192 && len<=100663296 && (path=="[anon]" || path ~ /dalvik|dex|ashmem|anon/))
+                printf "%d %d %s\n", s, len, path;
+            }' maps.txt > regions.txt
+          echo "regiones candidatas=$(wc -l < regions.txt)"
+          n=0
+          while read start len path; do
+            n=$((n+1)); [ $n -gt 60 ] && break
+            off=$((start/4096)); cnt=$((len/4096))
+            $A exec-out "su 0 dd if=/proc/$PID/mem bs=4096 skip=$off count=$cnt 2>/dev/null" > mem/r_$n.bin 2>/dev/null
+          done < regions.txt
+          echo "volcados $(ls mem/*.bin 2>/dev/null | wc -l) bin ($(du -sh mem 2>/dev/null|cut -f1))"
+          # Tallar dex por magic (python en el runner)
+          python3 - <<'PY'
+          import os,struct,glob,hashlib
+          os.makedirs('dex',exist_ok=True)
+          MAGICS=[b'dex\n035\x00',b'dex\n037\x00',b'dex\n038\x00',b'dex\n039\x00']
+          seen=set(); nf=0
+          for f in glob.glob('mem/*.bin'):
+              data=open(f,'rb').read()
+              i=0
+              while True:
+                  pos=min([data.find(m,i) for m in MAGICS if data.find(m,i)>=0] or [-1])
+                  if pos<0: break
+                  if pos+0x70<=len(data):
+                      size=struct.unpack_from('<I',data,pos+0x20)[0]
+                      if 0x70<size<=64*1024*1024 and pos+size<=len(data):
+                          blob=data[pos:pos+size]
+                          h=hashlib.sha1(blob).hexdigest()
+                          if h not in seen:
+                              seen.add(h); nf+=1
+                              open(f'dex/carved_{nf}_{size}.dex','wb').write(blob)
+                  i=pos+8
+          print('dex tallados:',nf, 'sizes:', sorted(os.path.getsize(x) for x in glob.glob('dex/*.dex')))
+          PY
+          ls -la dex/ 2>/dev/null | head
+          if ls dex/*.dex >/dev/null 2>&1; then
+            tar czf dex.tgz dex/
+            # subir a release PRIVADO (dreame-camera-bridge), no al repo publico
+            gh release view app-dex -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create app-dex -R dani811/dreame-camera-bridge --title app-dex --notes "dex descifrado de memoria (privado, transitorio)"
+            gh release upload app-dex -R dani811/dreame-camera-bridge dex.tgz --clobber
+            echo "SUBIDO dex.tgz ($(du -h dex.tgz|cut -f1)) al release privado app-dex"
+          else echo "SIN DEX tallado"; fi
+          docker stop redroid >/dev/null 2>&1; echo FIN; exit 0
