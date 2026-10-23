@@ -40,10 +40,13 @@ jobs:
           $A root; sleep 3; adb connect 127.0.0.1:5555
           for i in $(seq 1 40); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
           sleep 5
+          # SELinux permissive: sin esto el domain de app niega el ptrace de frida (causa #1 del ABORT)
+          $A shell "su 0 setenforce 0" 2>/dev/null; echo "selinux=$($A shell getenforce 2>/dev/null|tr -d '\r')"
           # frida-server
           curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz
           $A push fs /data/local/tmp/frida-server; $A shell chmod 755 /data/local/tmp/frida-server
-          $A shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 5
+          $A shell "su 0 sh -c 'nohup /data/local/tmp/frida-server >/dev/null 2>&1 &'"; sleep 5
+          echo "frida-server procs=$($A shell "su 0 sh -c 'ps -A 2>/dev/null | grep -c frida-server'" | tr -d '\r')"
           $A forward tcp:27042 tcp:27042
           # app
           gh release download apk218 -R dani811/dreame-camera-bridge -D apk
@@ -54,7 +57,7 @@ jobs:
           echo "app PID=$APID"; sleep 8
           # frida attach (app ya viva -> evita anti-frida de spawn) + hook del triple
           pip3 install -q "frida==16.7.19"
-          timeout $((CAP_SECS+40)) python3 driver_triple.py $CAP_SECS > /tmp/driver.log 2>&1 &
+          timeout $((CAP_SECS+40)) python3 driver_triple.py $CAP_SECS "$APID" > /tmp/driver.log 2>&1 &
           DPID=$!
           sleep 8
           # LOGIN = dispara el connect itls (ahi ocurre el HMAC con el deviceSecret).
@@ -77,7 +80,8 @@ jobs:
           { echo "=== FRIDA (connect itls en vivo) ==="; cat /tmp/triple_raw.txt 2>/dev/null; \
             echo "=== STORE ==="; cat /tmp/loot_store.txt 2>/dev/null; \
             echo "=== HEAP ==="; cat /tmp/loot_heap.txt 2>/dev/null; } > /tmp/loot.txt
-          echo "=== driver.log (SOLO nombres de campo) ==="; grep -E '^(GOT|NOTE|attached|ABORT)' /tmp/driver.log | tail -40
+          # driver.log completo: solo nombres de campo + diagnostico de attach (NUNCA valores)
+          echo "=== driver.log (diagnostico attach; sin valores) ==="; tail -60 /tmp/driver.log
           if [ -s /tmp/triple_raw.txt ]; then
             echo "campos frida:"; cut -d= -f1 /tmp/triple_raw.txt | sort -u
             echo "deviceSecret_hits=$(grep -c '^deviceSecret_hex=' /tmp/triple_raw.txt) devName_hits=$(grep -c '^deviceName=' /tmp/triple_raw.txt) mqttPwd_hits=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt)"
