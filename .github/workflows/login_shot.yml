@@ -1,0 +1,44 @@
+name: login_shot
+# DIAGNOSTICO: capturas del formulario de login (app Flutter -> uiautomator ciego).
+# NO teclea credenciales (ninguna captura puede contener usuario/contraseña).
+# NO abre el directo -> NO despierta el robot. Sube solo las imagenes del form vacio.
+on: { workflow_dispatch: {} }
+jobs:
+  shot:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + app + capturas del login (sin teclear nada)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+        run: |
+          set +e
+          A="adb -s 127.0.0.1:5555"
+          sudo apt-get update -q || true
+          sudo apt-get install -y -q android-tools-adb xz-utils || true
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 48); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          $A root; sleep 3; adb connect 127.0.0.1:5555
+          echo "wm_size=$($A shell wm size 2>/dev/null|tr -d '\r')  density=$($A shell wm density 2>/dev/null|tr -d '\r')"
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 $A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          $A shell pm clear com.dreame.smartlife
+          $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          mkdir -p shots
+          shot(){ $A exec-out screencap -p > shots/s_$1.png 2>/dev/null; echo "shot $1 ($(wc -c < shots/s_$1.png 2>/dev/null) bytes)"; }
+          sleep 8;  shot 01_arranque
+          # descartar popup de privacidad (coord del login.sh); capturar antes y despues
+          $A shell input tap 360 907 >/dev/null 2>&1; sleep 4; shot 02_tras_agree
+          $A shell input tap 360 784 >/dev/null 2>&1; sleep 3; shot 03
+          sleep 4; shot 04_form
+          sleep 6; shot 05_form2
+          echo "capturas (SIN credenciales tecleadas):"; ls -la shots/
+          docker stop redroid >/dev/null 2>&1; echo FIN
+      - name: subir capturas del form (vacio, sin datos de cuenta)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: login-shots, path: shots/, if-no-files-found: warn, retention-days: 1 }
