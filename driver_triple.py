@@ -10,9 +10,10 @@ out = open('/tmp/triple_raw.txt', 'a', encoding='utf-8')
 def onmsg(m, d):
     if m.get('type') == 'send':
         p = m.get('payload')
-        if isinstance(p, dict) and p.get('t') == 'triple':
-            out.write(str(p.get('k')) + '=' + str(p.get('v')) + '\n'); out.flush()
-            print('GOT', p.get('k')); return
+        if isinstance(p, dict) and p.get('t') in ('triple', 'itls'):
+            v = str(p.get('v'))
+            out.write(str(p.get('k')) + '=' + v + '\n'); out.flush()
+            print('GOT', p.get('k'), '(len=%d)' % len(v)); return   # nombre + longitud, NO el valor
         if isinstance(p, dict) and p.get('t') == 'note':
             print('NOTE', p.get('m')); return
     print('MSG', str(m)[:200])
