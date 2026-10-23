@@ -1,0 +1,95 @@
+name: loot_triple
+# Loot del TRIPLE itls (deviceName/productKey/deviceSecret) + params del CONNECT MQTT,
+# en sesion viva de redroid, SIN abrir el directo (solo login -> no despierta el robot).
+#
+# Mejora sobre live_loot.yml (pasivo): el deviceSecret NO sale en storage/heap (protegido,
+# §11). Aqui se captura VIVO con frida hookeando javax.crypto.Mac en el connect itls
+# (la clave del HMAC-SHA1 ES el deviceSecret; el signContent lleva dn/pk) + Paho
+# (clientId/username/password ya hechos, reutilizables porque el clientId es fijo, #291).
+# Degrada bien: si el HMAC es nativo y el Mac-hook no dispara, el Paho-hook igual da un
+# credencial de connect completo. Se conserva el barrido pasivo como corroboracion.
+#
+# Exfil = MISMO esquema hibrido que live_loot.yml: AES-256 aleatorio para el loot + la
+# clave AES cifrada con la pub.pem (RSA). Solo TU, con la privada, descifras. El log
+# imprime SOLO nombres de campo, nunca valores.
+on: { workflow_dispatch: { inputs: { capture_secs: { description: "ventana connect itls (s)", default: "150" } } } }
+jobs:
+  loot:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: redroid + frida + login + loot del triple (hibrido RSA, SIN directo)
+        env:
+          GH_TOKEN: ${{ secrets.APK_PAT }}
+          DH_USER:  ${{ secrets.DH_USER }}
+          DH_PASS:  ${{ secrets.DH_PASS }}
+          CAP_SECS: ${{ inputs.capture_secs }}
+        run: |
+          set +e
+          echo "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF4VHZoczM4R3VQYXllRWltTkErawpySzk1RjVJTVBMbXQrLzd0TEtBVkZXNE5BWFRjbWhOVTl0SzBWOVZlb0J3cTQ3UHlTMExlSmlPR0JuNS9SUWplCm5YcDdSUGRDUjhUU0NyaTJkR0dGUE1qaFpSeWhNZDlTNkFiUGtxamJqNXdDQ1dLclBNd3BSS2ZSWTJkT0tzRVEKQWFJOVRMcFF3YnU0RWNkMVdHRHRndXVzblFDVVhFd0FRT1VwWEEwbmpPSi93OEVtdkluZ3RNc0lPNUdlc09tSgpyS2wvb25abUQrblRLb0w0WCt0ektJSS9IRDNYODZvUDF5eHdBRStoUmQ2S1Y0NFRMRC91NjZ6bVdHaEFieVhVCnVpdHM5NFlIMzBud0hxZmhhc0xJVkFkcThyaWVyaGJ6OFMyTXJ5cFdnQ3kvbmdZVUFMbjFOZDREeWVYSmRSREcKVlFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==" | base64 -d > pub.pem
+          A="adb -s 127.0.0.1:5555"
+          sudo apt-get update -q || true
+          for t in 1 2 3; do sudo apt-get install -y -q android-tools-adb xz-utils python3-pip openssl && command -v adb && break; sleep 6; done
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          command -v adb >/dev/null || { echo 'FATAL no adb'; exit 1; }
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || sudo modprobe binder_linux
+          docker run -itd --privileged --name redroid -p 5555:5555 redroid/redroid:13.0.0-latest androidboot.locale=es-ES androidboot.timezone=Europe/Madrid
+          adb connect 127.0.0.1:5555
+          for i in $(seq 1 40); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          $A root; sleep 3; adb connect 127.0.0.1:5555
+          for i in $(seq 1 40); do [ "$($A shell getprop sys.boot_completed 2>/dev/null|tr -d '\r')" = "1" ] && break; sleep 4; done
+          sleep 5
+          # frida-server
+          curl -sL -o fs.xz https://github.com/frida/frida/releases/download/16.7.19/frida-server-16.7.19-android-arm64.xz; xz -d fs.xz
+          $A push fs /data/local/tmp/frida-server; $A shell chmod 755 /data/local/tmp/frida-server
+          $A shell "nohup /data/local/tmp/frida-server >/dev/null 2>&1 &"; sleep 5
+          $A forward tcp:27042 tcp:27042
+          # app
+          gh release download apk218 -R dani811/dreame-camera-bridge -D apk
+          timeout 180 $A install-multiple -r -d apk/base.apk apk/split_config.arm64_v8a.apk apk/split_config.xxhdpi.apk
+          $A shell pm clear com.dreame.smartlife
+          $A shell am start -n com.dreame.smartlife/com.dreame.smartlife.ui.activity.SplashActivity
+          APID=""; for i in $(seq 1 20); do APID=$($A shell pidof com.dreame.smartlife 2>/dev/null|tr -d '\r'); [ -n "$APID" ] && break; sleep 3; done
+          echo "app PID=$APID"; sleep 8
+          # frida attach (app ya viva -> evita anti-frida de spawn) + hook del triple
+          pip3 install -q "frida==16.7.19"
+          timeout $((CAP_SECS+40)) python3 driver_triple.py $CAP_SECS > /tmp/driver.log 2>&1 &
+          DPID=$!
+          sleep 8
+          # LOGIN = dispara el connect itls (ahi ocurre el HMAC con el deviceSecret).
+          # NO navigate.sh -> no se abre el directo -> el robot NO se despierta.
+          bash login.sh || true
+          echo "login hecho; dejo que conecte al canal itls..."
+          sleep "$CAP_SECS"
+          wait $DPID 2>/dev/null
+          # --- corroboracion pasiva (como live_loot) ---
+          D=/data/data/com.dreame.smartlife
+          $A shell "su 0 sh -c 'grep -rhiaE \"deviceSecret|securemode|hmacsha1|mqttPassword\" $D 2>/dev/null'" > /tmp/loot_store.txt 2>/dev/null
+          PID=$($A shell "su 0 pidof com.dreame.smartlife" | tr -d '\r' | awk '{print $1}')
+          $A shell "su 0 am dumpheap $PID /data/local/tmp/h.hprof" 2>/dev/null; sleep 8
+          $A shell "su 0 chmod 666 /data/local/tmp/h.hprof" 2>/dev/null
+          $A pull /data/local/tmp/h.hprof /tmp/h.hprof >/dev/null 2>&1
+          : > /tmp/loot_heap.txt
+          grep -aoE '[A-Za-z0-9_-]{4,48}&(a5RAm2U4V72|a19KqErUJam)' /tmp/h.hprof 2>/dev/null | sort -u | head >> /tmp/loot_heap.txt
+          grep -aoE '[A-Za-z0-9_.+-]{4,48}\|securemode=[0-9][^|]{0,90}\|' /tmp/h.hprof 2>/dev/null | sort -u | head >> /tmp/loot_heap.txt
+          # --- loot combinado: frida (lo que importa) + pasivo ---
+          { echo "=== FRIDA (connect itls en vivo) ==="; cat /tmp/triple_raw.txt 2>/dev/null; \
+            echo "=== STORE ==="; cat /tmp/loot_store.txt 2>/dev/null; \
+            echo "=== HEAP ==="; cat /tmp/loot_heap.txt 2>/dev/null; } > /tmp/loot.txt
+          echo "=== driver.log (SOLO nombres de campo) ==="; grep -E '^(GOT|NOTE|attached|ABORT)' /tmp/driver.log | tail -40
+          if [ -s /tmp/triple_raw.txt ]; then
+            echo "campos frida:"; cut -d= -f1 /tmp/triple_raw.txt | sort -u
+            echo "deviceSecret_hits=$(grep -c '^deviceSecret_hex=' /tmp/triple_raw.txt) devName_hits=$(grep -c '^deviceName=' /tmp/triple_raw.txt) mqttPwd_hits=$(grep -c '^mqtt_password=' /tmp/triple_raw.txt)"
+          else
+            echo "AVISO: frida no capturo nada (revisa que login conecto itls / anti-frida)"
+          fi
+          # --- exfil hibrido RSA+AES (mismo esquema que live_loot) ---
+          openssl rand -hex 32 > aeskey.hex
+          openssl enc -aes-256-cbc -pbkdf2 -pass file:aeskey.hex -in /tmp/loot.txt -out loot_triple.enc
+          openssl pkeyutl -encrypt -pubin -inkey pub.pem -in aeskey.hex -out key_triple.enc
+          gh release view cap-out -R dani811/dreame-camera-bridge >/dev/null 2>&1 || gh release create cap-out -R dani811/dreame-camera-bridge --title cap-out --notes x
+          gh release upload cap-out -R dani811/dreame-camera-bridge loot_triple.enc key_triple.enc --clobber
+          rm -f /tmp/loot.txt /tmp/triple_raw.txt aeskey.hex   # el claro NO abandona el runner
+          docker stop redroid >/dev/null 2>&1
+          echo "SUBIDO loot_triple.enc + key_triple.enc (release cap-out). FIN"; exit 0
